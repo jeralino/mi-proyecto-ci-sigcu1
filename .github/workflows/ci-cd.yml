@@ -1,0 +1,110 @@
+name: CI/CD MERN Stack (SIGCU)
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  # ===========================
+  # JOB 1: INTEGRACIÓN CONTINUA (CI)
+  # ===========================
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      # ---------- BACKEND ----------
+      - name: Instalar dependencias del backend
+        run: npm ci
+        working-directory: ./backend
+
+      - name: Ejecutar tests del backend
+        run: npm test
+        working-directory: ./backend
+
+      - name: Ejecutar linter del backend
+        run: npm run lint
+        working-directory: ./backend
+
+      # ---------- FRONTEND ----------
+      - name: Instalar dependencias del frontend
+        run: npm ci
+        working-directory: ./frontend
+
+      - name: Ejecutar tests del frontend
+        run: npm test
+        working-directory: ./frontend
+
+      # (Opcional) Si tu script lint falla, puedes comentar estas dos líneas
+      #- name: Ejecutar linter del frontend
+      #  run: npm run lint
+      #  working-directory: ./frontend
+
+      - name: Build del frontend
+        run: npm run build
+        working-directory: ./frontend
+
+      # Guardamos la carpeta 'dist' generada para usarla en el despliegue
+      - name: Subir artefacto de build del frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: ./frontend/dist
+
+  # ===========================
+  # JOB 2: DEPLOY FRONTEND (CD) -> GitHub Pages
+  # ===========================
+  deploy_frontend:
+    needs: ci
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' # Solo corre en ramas principales
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Permiso necesario para publicar en gh-pages
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Descargar artefacto del frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist # Lo descarga en una carpeta 'dist' en la raíz
+
+      - name: Deploy a GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+
+  # ===========================
+  # JOB 3: IMAGEN DOCKER BACKEND (CD) -> Docker Hub
+  # ===========================
+  build_and_push_backend:
+    needs: ci
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Login en Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Construir y Subir imagen Docker
+        # Asegúrate de cambiar 'nombre-imagen-sigcu' por el nombre que quieras
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/sigcu-backend:latest ./backend
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/sigcu-backend:latest
